@@ -1,0 +1,85 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+// Looking for ways to speed up your queries, or scale easily with your serverless or edge functions?
+// Try Prisma Accelerate: https://pris.ly/cli/accelerate-init
+
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id            String      @id @default(uuid())
+  email         String?     @unique
+  displayName   String?
+  createdAt     DateTime    @default(now())
+  updatedAt     DateTime    @updatedAt
+  accounts      Account[]
+  categories    Category[]
+  budgets       Budget[]
+  aiProfile     AIProfile?
+  transactions  Transaction[]
+}
+
+model Account {
+  id            String      @id @default(uuid())
+  userId        String
+  user          User        @relation(fields: [userId], references: [id])
+  currency      String
+  timezone      String
+  transactions  Transaction[]
+}
+
+model Category {
+  id            String      @id @default(uuid())
+  userId        String
+  user          User        @relation(fields: [userId], references: [id])
+  name          String
+  type          CategoryType
+  color         String?
+  transactions  Transaction[]
+}
+
+enum CategoryType {
+  expense
+  income
+  transfer
+}
+
+model Transaction {
+  id            String      @id @default(uuid())
+  accountId     String
+  account       Account     @relation(fields: [accountId], references: [id])
+  userId        String
+  user          User        @relation(fields: [userId], references: [id])
+  amount        Float
+  currency      String
+  categoryId    String?
+  category      Category?   @relation(fields: [categoryId], references: [id])
+  merchant      String?
+  note          String?
+  date          DateTime
+  createdAt     DateTime    @default(now())
+}
+
+model Budget {
+  id            String      @id @default(uuid())
+  userId        String
+  user          User        @relation(fields: [userId], references: [id])
+  categoryId    String?
+  category      Category?   @relation(fields: [categoryId], references: [id])
+  monthlyLimit  Float
+}
+
+model AIProfile {
+  userId          String    @id
+  user            User      @relation(fields: [userId], references: [id])
+  preferencesJSON String?
+  lastSuggestedAt DateTime?
+}
