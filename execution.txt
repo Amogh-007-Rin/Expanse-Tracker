@@ -1,1 +1,452 @@
-// making a expanse tracker exclusivly for students with advance ai features
+# Execution Plan — Advanced Student Expense Tracker (production-ready)
+
+**Purpose:** Give an agentic AI (Cursor) maximum context, explicit step-by-step tasks, constraints, design decisions, and measurable acceptance criteria so it can autonomously develop, test, secure, and deploy a production-ready cross-platform expense-tracking application tailored for students, with integrated AI-driven suggestions for saving money, budgeting, and behaviour nudges.
+
+---
+
+## 1. Project Summary
+
+**Product name (working):** PocketScholar
+
+**Tagline:** Smart, student-first expense tracking with AI-powered saving suggestions.
+
+**Core idea:** A lightweight, privacy-first cross-platform mobile app that lets students track daily expenses, visualise budget categories, receive personalised AI suggestions for saving money, and adopt better financial habits. The app will integrate offline-first data, sync with a secure backend, and include accessibility and low-bandwidth modes.
+
+**Primary users:** University/college students (18–26), budget-conscious, mobile-first, often international.
+
+**Constraints & priorities:**
+
+* Privacy-first: minimal PII collection; data stored encrypted at rest.
+* Offline-first UX: app must function without network; queue sync when online.
+* Fast MVP: deployable to testers within 4–6 sprints (agent to manage sprints).
+* Scalable backend and simple infra to deploy to AWS/GCP with Docker.
+
+---
+
+## 2. High-level goals & success metrics
+
+**Goals:**
+
+1. Record expenses quickly (≤ 5 taps) and categorise them.
+2. AI suggestions for saving 3–5 personalized tips weekly.
+3. Visual reports (weekly/monthly) and budget alerts.
+4. Secure sign-in and optional guest mode.
+5. CI/CD pipeline with automated tests and deployment to staging.
+
+**Success metrics:**
+
+* Time-to-add-expense (median) < 8 seconds.
+* Monthly active users retention (30-day) ≥ 25% at pilot.
+* AI suggestion usefulness rating ≥ 4/5 in pilot users.
+* App crash-free rate ≥ 99.7%.
+
+---
+
+## 3. Recommended Tech Stack (opinionated)
+
+**Frontend (mobile):** React Native + TypeScript + Expo (for fast iteration). Use React Navigation, Zustand or Redux Toolkit for state.
+
+**Backend:** Node.js (TypeScript) + Express or Fastify + Prisma ORM + PostgreSQL (hosted on RDS/Cloud SQL). Use Redis for caching/queues.
+
+**AI services:** OpenAI or compatible LLM API for suggestion generation; local prompt templates + user-context vectors stored in Pinecone or Supabase Vector DB for personalization. If budget is constrained, use OpenAI embeddings + Postgres vector extension.
+
+**Auth:** Auth0 / Clerk or custom JWT with OAuth options. Offer anonymous/guest accounts stored locally.
+
+**Storage:** S3-compatible object storage for backups and exports.
+
+**Infra / Deploy:** Docker + GitHub Actions CI -> AWS ECS / Fargate or GCP Cloud Run. Use Terraform for infra-as-code (optional).
+
+**Testing:** Jest + React Native Testing Library; Supertest for API; Playwright / Detox for e2e.
+
+**Monitoring:** Sentry for crash reporting; Prometheus + Grafana (or Cloud provider equivalents) for metrics.
+
+**Analytics:** PostHog or Plausible for privacy-friendly analytics.
+
+**CI:** GitHub Actions with PR checks, lint, tests, build artifacts, and release pipeline.
+
+---
+
+## 4. Data model (core)
+
+Use simple normalized relational schema. Example (Prisma-like):
+
+```
+User { id, email?, displayName?, createdAt, updatedAt }
+Account { id, userId, currency, timezone }
+Category { id, userId, name, type[expense|income|transfer], color }
+Transaction { id, accountId, userId, amount, currency, categoryId, merchant?, note?, date, createdAt }
+Budget { id, userId, categoryId?, monthlyLimit }
+AIProfile { userId, preferencesJSON, lastSuggestedAt }
+```
+
+**Notes:** Keep PII optional. Allow local-only users without server-side User rows.
+
+---
+
+## 5. API specification (minimal v1 endpoints)
+
+**Auth**
+
+* POST /auth/signup
+* POST /auth/login
+* POST /auth/anonymous
+* POST /auth/refresh
+
+**Transactions**
+
+* GET /transactions?from=YYYY-MM-DD&to=YYYY-MM-DD&limit&offset
+* POST /transactions
+* PATCH /transactions/:id
+* DELETE /transactions/:id
+
+**Categories**
+
+* GET /categories
+* POST /categories
+* PATCH /categories/:id
+* DELETE /categories/:id
+
+**Budgets & Reports**
+
+* GET /budgets
+* POST /budgets
+* GET /reports/spending?period=monthly
+
+**AI Suggestions**
+
+* GET /ai/suggestions?period=last30days
+* POST /ai/feedback (rating + text)
+
+**Sync & Backup**
+
+* POST /sync (delta sync)
+* GET /export?format=csv|pdf
+
+Responses must use consistent pagination and standardized error objects.
+
+---
+
+## 6. AI features (detailed) — how to build
+
+### 6.1 Features list
+
+1. **Personalised saving suggestions:** Weekly digest with 3 suggestions (e.g., switch to generic brand, avoid takeout X days/wk, move £X to savings).
+2. **Expense categorisation assistant:** Suggest categories for new expenses using merchant and note.
+3. **Budget prediction & alerts:** Predict if user will exceed budgets by month-end and suggest corrective actions.
+4. **What-if simulations:** "If you reduce takeout by 50%, you'll save £X/month." Use simple heuristics + LLM for wording.
+5. **Smart recurring transaction detection:** Detect subscriptions and flag them.
+6. **Natural-language query:** User asks "How much did I spend on food last month?" -> return quick answer + link to report.
+
+### 6.2 Minimal architecture for AI
+
+* **Input signals:** Transactions (amount, category, merchant, date), budgets, user preferences (study abroad? cooking?), anonymised embeddings of transaction patterns.
+* **Processing:** Batch/cron job that computes features weekly; LLM called with compact context (last N transactions summary + budgets + preferences) and a prompt template to produce suggestions.
+* **Storage:** Keep last 6 months of suggestion metadata (suggestion text, context snapshot, user feedback).
+
+### 6.3 Prompt engineering (examples)
+
+**Prompt template for suggestions** (concise):
+
+```
+You are a friendly student finance assistant. Given the following user summary and goals, produce exactly 3 concise, actionable saving suggestions (each ≤ 120 characters) and a one-line reason. Use British English.
+
+User summary:
+- Monthly spend: £{monthly_spend}
+- Top categories (3): {cat1}: £{amt1}, {cat2}: £{amt2}, {cat3}: £{amt3}
+- Monthly budget: £{budget}
+- Recurring subscriptions: {subs}
+- Preferences: {prefs}
+
+Output JSON: {"suggestions":[{"tip":"","reason":""}, ...]}
+```
+
+**Safety & privacy:** Never include PII in prompts. Truncate transaction lists; use aggregated numbers.
+
+### 6.4 Evaluation & feedback loop
+
+* Collect user rating (1–5) for each suggestion. Use feedback to reweight suggestion templates and fine-tune or adjust prompts.
+* Track open rate for suggestions and convert to usefulness metric.
+
+---
+
+## 7. UX / Product flows
+
+**Core flows:**
+
+1. Onboarding — optional sign-up; select currency; set monthly budget; import bank CSV (optional).
+2. Add expense (fast): tap + -> amount -> optional quick pick category -> save.
+3. Daily feed: latest transactions + AI-suggested category for unlabelled ones.
+4. Reports: Weekly/Monthly charts, top merchants, trendline, budget progress.
+5. AI hub: weekly tips, what-if simulator, subscription manager.
+
+**Microcopy examples:** Keep short, empathetic, action-focused.
+
+---
+
+## 8. Privacy & Security checklist
+
+* Encrypt sensitive fields in DB at rest.
+* Use TLS for all endpoints.
+* Store API keys and secrets in vault (AWS Secrets Manager / GitHub Secrets).
+* Minimally collect PII; provide guest mode with local storage only.
+* Implement rate-limiting and brute-force protection for auth.
+* Provide data export & data delete endpoints for GDPR compliance.
+
+---
+
+## 9. Testing strategy
+
+* Unit tests for core utilities (currency conversion, budgeting math).
+* API contract tests (Supertest) for all endpoints.
+* Snapshot tests and component tests for screens.
+* Integration tests for sync logic and offline queue.
+* E2E tests (Detox or Playwright) for critical flows: add expense, view report, sign-up.
+* Add security scans (Dependabot, Snyk).
+
+---
+
+## 10. CI/CD pipeline (GitHub Actions outline)
+
+**On PR:**
+
+* Lint (ESLint + Prettier), type-check (tsc)
+* Run unit tests
+* Run API contract tests
+* Build app artifact (Expo build or Android/iOS simulators)
+
+**On merge to main:**
+
+* Run full test suite
+* Build Docker images and push to registry
+* Deploy to staging
+* Run smoke tests
+
+**On release tag:**
+
+* Deploy to production
+* Run post-deploy health checks
+
+---
+
+## 11. Deliverables & milestones (agent should create branches and PRs)
+
+**Milestone 0 — repo bootstrap (branch: scaffold/init)**
+
+* Initialize mono-repo or two repos (mobile, backend) with TypeScript, linting, basic README, license.
+* Add CI skeleton.
+* Make first PR and merge.
+
+**Milestone 1 — core data model + auth (branch: feature/auth-db)**
+
+* Implement DB models + migrations
+* Implement user signup/login + anonymous
+* Expose simple API and tests.
+
+**Milestone 2 — transactions CRUD + local mobile UI (branch: feature/transactions)**
+
+* Server endpoints + tests
+* Mobile screens: add, list, edit transaction, offline queue.
+
+**Milestone 3 — categories, budgets, reports (branch: feature/reports)**
+
+* Category management
+* Budget endpoints
+* Mobile charts (use recharts or victory native)
+
+**Milestone 4 — AI features (branch: feature/ai)**
+
+* Implement AI endpoints, weekly job, prompt templates
+* Mobile UI for suggestions and feedback
+
+**Milestone 5 — QA, e2e, infra, release (branch: release/v1.0)**
+
+* Tests, Sentry, monitoring, deployment to staging and production
+
+Agent instructions: For each milestone create a PR with detailed description, checklists of acceptance criteria, run CI, request code review from `@maintainer` (or use configurable reviewer). Merge only after passing CI.
+
+---
+
+## 12. How the agent (Cursor) should operate (concrete step-by-step)
+
+1. **Fork or init repo** under given org/name. Create `scaffold/init` branch.
+2. Commit minimal scaffolding: README, LICENSE (MIT), .gitignore, package.json, tsconfig, ESLint, Prettier, GitHub Actions workflow file skeleton. Push and open PR.
+3. After merge, implement Milestone 1: create branch `feature/auth-db`, add Prisma schema, migrations, simple Express server, seed script, and tests. Push PR.
+4. Run CI and fix issues until tests pass.
+5. Continue through milestones sequentially. For any unknown choice (e.g., which hosting region), apply sensible defaults (EU/UK region) and document choices in repo's `DECISIONS.md`.
+6. For AI features: store API keys only in secrets; test LLM calls with a `LLM_MOCK_MODE` flag that returns deterministic outputs for CI testing (avoid real calls in CI).
+7. Create clear issues and link them to PRs; tag each PR with milestone label.
+8. When ready for staging, create docker-compose and Kubernetes manifests (or Cloud Run service) and deploy to staging cluster.
+9. Create a `RUNBOOK.md` with rollback steps and critical commands.
+
+**Autonomy limits:**
+
+* Never publish production API keys to repo.
+* Get explicit human sign-off (create an Issue labelled `awaiting-approval`) before deploying to production.
+
+---
+
+## 13. Agent prompts & tooling shortcuts (for Cursor)
+
+**Persona prompt (system):**
+
+> You are Cursor — an autonomous engineering agent. Build the PocketScholar app by following the execution plan in `execution.txt`. Create branches for each milestone, open PRs, run tests, and document decisions. Keep commits atomic and descriptive. Do not deploy to production without human approval.
+
+**Task prompt example (implement transactions endpoint):**
+
+```
+Task: Implement Transactions CRUD API
+Branch: feature/transactions-api
+Checklist:
+- Add Transactions table migration
+- Implement GET /transactions with pagination
+- Implement POST /transactions with validation
+- Add unit tests and integration tests
+- Add OpenAPI spec update
+- Create PR and description
+```
+
+**Prompt for AI suggestion module:**
+
+```
+Task: Implement AI suggestions endpoint
+- Build endpoint GET /ai/suggestions
+- Create job runner (cron) that aggregates last 30 days and calls LLM with template
+- Persist suggestions and expose feedback endpoint
+- Create mock LLM adaptor and unit tests
+```
+
+---
+
+## 14. Operational run commands & shortcuts
+
+**Local dev**
+
+* `pnpm install` or `npm ci`
+* `pnpm dev:api` -> start backend
+* `pnpm dev:mobile` -> start Expo
+* `pnpm test` -> run tests
+
+**Migrations & DB**
+
+* `npx prisma migrate dev --name init`
+* `npx prisma db seed`
+
+**Build**
+
+* `docker build -t pocketscholar-api ./backend`
+* `docker-compose up --build`
+
+---
+
+## 15. Acceptance criteria (definition of done)
+
+For every PR:
+
+* Lint and type-check pass
+* Unit & integration tests pass
+* Basic E2E smoke test passes
+* README updated for feature
+* OpenAPI spec updated (if applicable)
+
+For final release:
+
+* Staging deployed and smoke-tested
+* Sentry or monitoring integrated
+* Runbook present
+* Basic user documentation and privacy policy drafted
+
+---
+
+## 16. Deliverable artifacts (expected repo contents)
+
+* `mobile/` (React Native app)
+* `backend/` (API, prisma schema, migrations)
+* `infra/` (Docker, terraform or k8s manifests)
+* `docs/` (DECISIONS.md, RUNBOOK.md, SECURITY.md)
+* `.github/workflows/` (CI)
+* `tests/` (unit/integration/e2e)
+
+---
+
+## 17. Helpful templates (copy into repo)
+
+* PR template
+* Issue template (bug, feature request)
+* Code of conduct
+* CONTRIBUTING.md
+
+---
+
+## 18. Risks and mitigations
+
+* **Risk:** LLM costs grow with users. -> Mitigate: Use lightweight aggregated context, caching, and plan for prompting budget limits.
+* **Risk:** Data privacy concerns. -> Mitigate: anonymise prompts, encrypt data, provide local-only guest mode.
+* **Risk:** Autonomous agent makes destructive changes -> Mitigate: protect main branch, require approvals for production deploys.
+
+---
+
+## 19. Next immediate actions (first 10 steps for the agent)
+
+1. Create GitHub repo `pocketscholar` or use provided repo URL.
+2. Create `scaffold/init` branch and add minimal scaffolding.
+3. Open PR and merge.
+4. Create branch `feature/auth-db` and implement Prisma schema + migrations.
+5. Implement auth endpoints + tests.
+6. Create branch `feature/transactions` and implement CRUD endpoints.
+7. Create mobile `mobile/` Expo app with `Add Expense` screen wired to backend.
+8. Add CI skeleton `.github/workflows/ci.yml`.
+9. Implement mock LLM adaptor and `LLM_MOCK_MODE` for CI.
+10. Run tests and fix issues until CI passes.
+
+---
+
+## 20. Communication & reporting format for agent
+
+Every PR body must include:
+
+* Summary of changes
+* Files changed
+* How to test locally (commands)
+* Risk/notes
+* Acceptance checklist with checkboxes
+
+Create a periodic status report (weekly) summarising: completed milestones, open PRs, blockers, next steps.
+
+---
+
+## 21. Useful references (to include in repo `docs/REFERENCES.md`)
+
+* LLM prompt template file for suggestions
+* Data privacy & GDPR checklist
+* Design tokens and colour palette suggestions for accessibility
+
+---
+
+## 22. Example: Minimal prompt + sample response (for AI module tests)
+
+**Input (mock):**
+
+* monthly_spend: 400
+* top_categories: Food: 160, Transport: 80, Subscriptions: 40
+* budget: 300
+* subs: Netflix(£6.99/month)
+* prefs: cooks sometimes, lives on campus
+
+**Expected Output (JSON)**
+
+```
+{"suggestions":[{"tip":"Cook two extra meals/week instead of takeout","reason":"Average takeout cost ~£6 — cook saves ~£40/month"}, ...]}
+```
+
+---
+
+## 23. Final notes to the agent
+
+* Keep commits small and testable.
+* Document every major decision in `DECISIONS.md` with date and rationale.
+* Avoid exposing secrets. Use `LLM_MOCK_MODE` in CI.
+* Stop and create an `awaiting-approval` issue when approaching production deploy.
+
+---
+
+End of execution file.
