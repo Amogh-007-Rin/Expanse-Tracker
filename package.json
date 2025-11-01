@@ -1,0 +1,22 @@
+{
+  "name": "pocketscholar",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Smart, student-first expense tracking with AI-powered saving suggestions.",
+  "main": "index.js",
+  "scripts": {
+    "dev:api": "pnpm --filter backend dev",
+    "dev:mobile": "pnpm --filter mobile start",
+    "lint": "eslint . --ext .ts,.tsx,.js,.jsx",
+    "type-check": "tsc --noEmit",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "PocketScholar",
+  "license": "MIT",
+  "devDependencies": {
+    "prettier": "^3.2.5",
+    "eslint": "^8.57.0",
+    "typescript": "^5.4.5"
+  }
+}
